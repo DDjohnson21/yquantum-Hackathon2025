@@ -1,5 +1,3 @@
-
-
 import pandas as pd
 import numpy as np
 import math
@@ -13,7 +11,7 @@ import matplotlib.pyplot as plt
 csv_file = 'tornado_severity_data.csv'
 df = pd.read_csv(csv_file)
 
-# Verify required columns exist
+# Verify required columns exists
 required_cols = ['CAT Severity Code', 'ACC_STD_LAT_NBR', 'ACC_STD_LON_NBR']
 if not all(col in df.columns for col in required_cols):
     raise ValueError("CSV file must contain 'CAT Severity Code', 'ACC_STD_LAT_NBR', and 'ACC_STD_LON_NBR' columns.")
@@ -28,19 +26,19 @@ df['CAT Severity Code'] = df['CAT Severity Code'].astype(int)
 # =============================================================================
 # STEP 2: CLUSTER THE GEOGRAPHIC DATA
 # =============================================================================
-# Use geographic coordinates for clustering.
+# Use the provided geographic columns for clustering.
 coords = df[['ACC_STD_LAT_NBR', 'ACC_STD_LON_NBR']]
-n_clusters = 5  # You can adjust this number as needed.
+n_clusters = 5  # Adjust this number as needed.
 kmeans = KMeans(n_clusters=n_clusters, random_state=42)
 df['cluster'] = kmeans.fit_predict(coords)
 
-# Optional: Visualize the clustering result.
-plt.figure(figsize=(8, 6))
-plt.scatter(df['ACC_STD_LON_NBR'], df['ACC_STD_LAT_NBR'], c=df['cluster'], cmap='viridis', alpha=0.7)
-plt.xlabel("Longitude")
-plt.ylabel("Latitude")
-plt.title("Geographic Clustering of Claims")
-plt.show()
+# OPTIONAL: (Uncomment to visualize clustering as a scatter plot)
+# plt.figure(figsize=(8, 6))
+# plt.scatter(df['ACC_STD_LON_NBR'], df['ACC_STD_LAT_NBR'], c=df['cluster'], cmap='viridis', alpha=0.7)
+# plt.xlabel("Longitude")
+# plt.ylabel("Latitude")
+# plt.title("Geographic Clustering of Claims")
+# plt.show()
 
 # =============================================================================
 # STEP 3: COMPUTE CLUSTER-SPECIFIC CLAIM VOLUMES
@@ -63,11 +61,11 @@ print(cluster_claim_volume)
 # =============================================================================
 # Target resolution days for 90% of claims (example values).
 target_days = {
-    1: 5,
-    2: 7,
-    3: 10,
-    4: 12,
-    5: 15
+    1: 7,
+    2: 14,
+    3: 21,
+    4: 28,
+    5: 28
 }
 
 # Cost parameters: fixed cost X and additional cost per extra day.
@@ -146,8 +144,8 @@ for i in range(num_vars):
 
     # Local penalty: enforce that staffing in cluster c meets the local claim volume.
     local_claim = cluster_claim_volume[c][j]
-    # Expand the squared penalty: A * (local_claim - target_days[j] * N_j)^2, where 
-    # N_j is the effective number of handlers = sum(weight * prod_rate * x)
+    # Expanded penalty: A * (local_claim - target_days[j] * N_j)^2,
+    # where N_j is the effective number of handlers = sum(weight * prod_rate * x)
     pen_lin = -2 * A * local_claim * target_days[j] * (prod_rate * weight)
     pen_self = A * (target_days[j] ** 2) * ((prod_rate * weight) ** 2)
     add_to_Q(i, i, lin_cost + pen_lin + pen_self)
@@ -233,3 +231,133 @@ for c in clusters:
             count = staffing_solution[(s, j, c)]
             if count > 0:
                 print(f"    Skill {s} handlers: {count}")
+
+
+
+# =============================================================================
+# STEP 10: VISUALIZE COST AND TIME USING DYNAMIC ALLOCATION
+# =============================================================================
+# In this section, we aggregate the optimal staffing counts over all skills for each cluster,
+# then compute two metrics dynamically:
+#
+# 1. Total Staffing Cost per Cluster using:
+#    Cost per Handler = X + daily_cost * (target_days[j]-1)
+#
+# 2. Average Resolution Time per Cluster as a weighted average of target_days,
+#    weighted by the number of handlers allocated.
+#
+# For each cluster and severity, we calculate:
+#    total_count = sum(staffing counts for all skills for that (cluster, severity))
+#    For cost: total_cost += total_count * cost_per_handler
+#    For time: total_time += total_count * target_days[j]
+# Finally, we compute the average resolution time as (total_time / total_count) if total_count > 0.
+
+cluster_costs = {}
+cluster_total_handlers = {}
+cluster_avg_time = {}
+for c in clusters:
+    total_cost_cluster = 0
+    total_time = 0
+    total_count = 0
+    for j in severity_levels:
+        cost_per_handler = X + daily_cost * (target_days[j] - 1)
+        count_j = sum(staffing_solution[(s, j, c)] for s in range(1, 6))
+        total_cost_cluster += count_j * cost_per_handler
+        total_time += count_j * target_days[j]
+        total_count += count_j
+    cluster_costs[c] = total_cost_cluster
+    cluster_total_handlers[c] = total_count
+    avg_time = total_time / total_count if total_count > 0 else 0
+    cluster_avg_time[c] = avg_time
+
+# Create a DataFrame to hold these metrics.
+df_metrics = pd.DataFrame({
+    'Cluster': list(cluster_costs.keys()),
+    'Total Cost': list(cluster_costs.values()),
+    'Average Resolution Days': [cluster_avg_time[c] for c in clusters]
+})
+df_metrics.sort_values('Cluster', inplace=True)
+
+# Plot the dynamic allocation results using two subplots.
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+# Subplot 1: Bar chart of Total Staffing Cost per Cluster.
+ax1.bar(df_metrics['Cluster'].astype(str), df_metrics['Total Cost'], color='orange')
+ax1.set_xlabel('Cluster')
+ax1.set_ylabel('Total Staffing Cost')
+ax1.set_title('Total Staffing Cost per Cluster')
+
+# Subplot 2: Bar chart of Average Resolution Days per Cluster.
+ax2.bar(df_metrics['Cluster'].astype(str), df_metrics['Average Resolution Days'], color='skyblue')
+ax2.set_xlabel('Cluster')
+ax2.set_ylabel('Average Resolution Days')
+ax2.set_title('Average Resolution Days per Cluster')
+
+plt.tight_layout()
+plt.show()
+
+
+
+
+
+
+
+# # =============================================================================
+# # STEP 10 (MODIFIED): VISUALIZE AGGREGATED COST AND TIME (ALL CLUSTERS)
+# # =============================================================================
+# # Instead of showing five clusters, we combine them into a single data point.
+# # 1. Aggregate cost across all clusters.
+# # 2. Compute an overall average resolution time across all clusters.
+
+# global_cost = 0
+# global_time = 0
+# global_count = 0
+
+# # Accumulate cost and time from each cluster
+# for c in clusters:
+#     # Compute total cost and total time for this cluster
+#     total_cost_cluster = 0
+#     total_time_cluster = 0
+#     total_count_cluster = 0
+#     for j in severity_levels:
+#         cost_per_handler = X + daily_cost * (target_days[j] - 1)
+#         count_j = sum(staffing_solution[(s, j, c)] for s in range(1, 6))
+#         total_cost_cluster += count_j * cost_per_handler
+#         total_time_cluster += count_j * target_days[j]
+#         total_count_cluster += count_j
+
+#     # Add this cluster's totals to the overall sum
+#     global_cost += total_cost_cluster
+#     global_time += total_time_cluster
+#     global_count += total_count_cluster
+
+# # Compute overall average resolution time across all clusters
+# if global_count > 0:
+#     global_avg_time = global_time / global_count
+# else:
+#     global_avg_time = 0
+
+# # Now we create a figure with two subplots:
+# # Left subplot: single bar for total cost (all clusters)
+# # Right subplot: single bar for average resolution days (all clusters)
+
+# fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+# # --- Subplot 1: Single bar for aggregated total cost ---
+# ax1.bar(x=[0], height=[global_cost], color='orange')
+# ax1.set_xlabel('All Clusters')
+# ax1.set_ylabel('Total Staffing Cost')
+# ax1.set_title('Total Staffing Cost (All Clusters)')
+# ax1.set_xticks([0])
+# ax1.set_xticklabels(['All Clusters'])
+
+# # --- Subplot 2: Single bar for aggregated average resolution days ---
+# ax2.bar(x=[0], height=[global_avg_time], color='skyblue')
+# ax2.set_xlabel('All Clusters')
+# ax2.set_ylabel('Average Resolution Days')
+# ax2.set_title('Average Resolution Days (All Clusters)')
+# ax2.set_xticks([0])
+# ax2.set_xticklabels(['All Clusters'])
+
+# plt.tight_layout()
+# plt.show()
