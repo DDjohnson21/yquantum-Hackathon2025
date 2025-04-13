@@ -1,1 +1,11 @@
 PLAN OF ACTION:
+
+
+
+
+Notes/ Actions perfomed:
+pip install pytket
+pip install pytket-qaoa
+pip install pytket-extensions-quantinuum
+
+
